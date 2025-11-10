@@ -28,9 +28,11 @@ The **NWU CSE FEST 2025 Datathon Competition** was a credit card fraud detection
 ### Competition Details
 - **Task**: Binary Classification (Fraud Detection)
 - **Target**: Predict whether a transaction is fraudulent ("Yes") or legitimate ("No")
-- **Evaluation Metric**: Accuracy, Precision, Recall, F1-Score (or similar classification metrics)
-- **Dataset Size**: Large-scale transaction data with multiple data sources
-- **Challenge**: Imbalanced dataset with class imbalance (fraud cases are rare)
+- **Evaluation Metric**: Cohen Kappa Score
+- **Dataset Size**: 
+  - Training: 6,240,474 transactions
+  - Test: 2,674,489 transactions
+- **Challenge**: Extreme class imbalance (fraud rate: ~0.15%)
 
 ### The Problem
 Credit card fraud is a significant issue in the financial industry, costing billions annually. The challenge was to build a machine learning model that can accurately detect fraudulent transactions while minimizing false positives (legitimate transactions flagged as fraud) and false negatives (fraudulent transactions missed).
@@ -51,17 +53,19 @@ ___
 
 ## Problem Analysis
 
-#### 1. **Class Imbalance Challenge**
-- Fraud transactions are typically < 5% of all transactions
-- Standard classifiers may predict "No" for everything and achieve high accuracy
-- Need for specialized techniques: oversampling, undersampling, or class weights
-- Focus on recall (catching fraud) while maintaining precision
+#### 1. **Extreme Class Imbalance Challenge**
+- **Fraud rate**: 0.15% (9,332 fraud cases out of 6,240,474 transactions)
+- Standard classifiers may predict "No" for everything and achieve high accuracy but low Kappa
+- **Solution**: Used `scale_pos_weight` in XGBoost to handle imbalance
+- **Threshold Optimization**: 2-phase threshold tuning to maximize Cohen Kappa score
+- **Evaluation**: Cohen Kappa score rewards balanced predictions (not just accuracy)
 
 #### 2. **Large-Scale Data Processing**
-- **Training transactions**: Millions of records (>200MB file)
-- **Memory limitations**: Cannot load entire dataset into memory
-- **Solution**: Chunked processing with pandas chunksize
-- **Efficient merging**: Stream processing for data joins
+- **Training transactions**: 6,240,474 records
+- **Test transactions**: 2,674,489 records
+- **Memory**: ~7.6 GB training data, ~2.6 GB test data
+- **Solution**: Used Parquet format for efficient I/O, indexed by transaction_id
+- **GPU Acceleration**: Leveraged XGBoost GPU for fast training (~14 minutes for 5-fold CV)
 
 #### 3. **Multi-Source Data Integration**
 - **Transactions**: Core transaction data with amounts, dates, merchants
@@ -71,11 +75,14 @@ ___
 - **Challenge**: Merging multiple tables efficiently without memory overflow
 
 #### 4. **Feature Engineering Complexity**
-- **Temporal features**: Time of day, day of week, time since last transaction
-- **Behavioral features**: Transaction frequency, average amount, spending patterns
-- **Risk indicators**: Card on dark web, credit score, debt-to-income ratio
-- **Geographic features**: Merchant location vs user location
-- **MCC patterns**: Unusual merchant categories for the user
+- **Temporal features**: Hour, day of week, weekend flag, night flag, month
+- **Account features**: Account age (days), PIN age (years)
+- **Amount features**: Log amount, high amount flag, amount per day
+- **Geographic features**: Vectorized Haversine distance from home (10x faster)
+- **Target encoding**: Fraud rates for card_id, client_id, merchant_id, mcc, merchant_state, use_chip
+- **Frequency encoding**: Transaction counts for card_id, client_id, merchant_id, merchant_state
+- **Risk interactions**: Amount × merchant risk, distance × merchant risk, MCC risk × amount
+- **Data drift**: Identified use_chip and has_chip as 100% missing in test (dropped)
 
 #### 5. **Data Quality Issues**
 - **Missing values**: NaN values in various columns
@@ -201,22 +208,26 @@ ___
 
 ### Overall Strategy
 
-Our strategy focused on **maximizing fraud detection accuracy** through:
+Our strategy focused on **maximizing Cohen Kappa Score** through:
 
-1. **Comprehensive Data Integration**: Merging all data sources to create rich feature set
-2. **Efficient Memory Management**: Chunked processing for large datasets
-3. **Robust Data Cleaning**: Handling missing values, data type issues, and JSON parsing
-4. **Feature Engineering**: Creating meaningful features from transaction patterns
-5. **Class Imbalance Handling**: Using techniques to address fraud rarity
-6. **Model Selection**: Choosing appropriate algorithms for fraud detection
+1. **Comprehensive Feature Engineering**: Created 47 features from transaction patterns, user behavior, and merchant characteristics
+2. **Target Encoding**: Leveraged fraud rates for cards, clients, merchants, and MCC codes
+3. **Frequency Encoding**: Captured transaction frequency patterns
+4. **Geographic Features**: Vectorized Haversine distance calculation for merchant-user distance
+5. **Temporal Features**: Extracted time-based patterns (hour, day, weekend, night)
+6. **Risk Interactions**: Created merchant risk × amount, distance × merchant risk interactions
+7. **XGBoost with GPU**: Leveraged GPU acceleration for fast training
+8. **Threshold Optimization**: 2-phase threshold tuning (coarse → fine) for optimal Kappa
+9. **Drift Handling**: Identified and dropped columns with 100% missing values in test set
 
 ### Key Principles
 
-- **Recall over Precision**: Better to flag suspicious transactions than miss fraud
-- **Feature Richness**: Leverage all available data sources
-- **Scalability**: Handle large datasets efficiently
-- **Robustness**: Handle data quality issues gracefully
-- **Interpretability**: Understand which features drive fraud detection
+- **Kappa Optimization**: Focused on Cohen Kappa score as the evaluation metric
+- **Target Encoding**: Used fraud rates for high-cardinality categoricals (merchant_id, mcc, card_id)
+- **Feature Interactions**: Created risk-aware interactions (amount × merchant risk, distance × merchant risk)
+- **Data Drift Awareness**: Identified and handled test-time drift (use_chip, has_chip 100% missing in test)
+- **Efficient Processing**: Vectorized operations for speed (10x faster distance calculation)
+- **Regularization**: Strong L1/L2 regularization to prevent overfitting on imbalanced data
 
 <br>
 
@@ -281,18 +292,18 @@ ___
 ### Implementation Status
 
 #### Completed
-- **Data Merging**: Comprehensive script to merge all data sources
-- **Memory-Efficient Processing**: Chunked processing for large datasets
-- **Robust JSON Parsing**: Handling control characters and various JSON formats
-- **Data Type Standardization**: Consistent data types across all sources
-- **MCC Code Integration**: Merchant category code enrichment
+- **Data Preprocessing**: Indexed datasets, dropped PII, cleaned money columns, parsed dates
+- **Feature Engineering**: Created 47 features (temporal, geographic, target encoding, frequency encoding, interactions)
+- **Model Training**: XGBoost with GPU, 5-fold Stratified K-Fold, threshold optimization
+- **Prediction Pipeline**: Generated predictions with optimal threshold (0.717)
+- **Submission Generation**: Created submission file with 2,674,489 predictions
 
-#### In Progress / Planned
-- **Feature Engineering**: Creating temporal, behavioral, and geographic features
-- **Model Training**: Implementing fraud detection models
-- **Hyperparameter Tuning**: Optimizing model parameters
-- **Model Evaluation**: Comprehensive performance metrics
-- **Prediction Pipeline**: Generating predictions for test set
+#### Key Achievements
+- **Final Score**: Cohen Kappa = 0.90425
+- **CV Performance**: Mean CV Kappa = 0.89627, OOF Kappa = 0.89522
+- **Ranking**: #6 out of 40 teams
+- **Feature Count**: 47 engineered features
+- **Training Time**: ~14 minutes on GPU
 
 <br>
 
@@ -302,26 +313,44 @@ ___
 
 ## Data Preprocessing
 
-### Implementation: `merge_all.py`
+### Implementation Overview
 
-Our data preprocessing implementation is contained in `merge_all.py`, which efficiently merges all data sources into a single comprehensive dataset.
+Our data preprocessing pipeline was implemented in a Kaggle notebook and consisted of multiple stages:
 
-#### Key Features:
-- **Chunked Processing**: Handles large transaction files (>200MB) without memory overflow
-- **Robust JSON Parsing**: Handles control characters and various JSON formats
-- **Memory Management**: Explicit garbage collection and memory cleanup
-- **Data Type Standardization**: Consistent data types for reliable merging
-- **Error Handling**: Graceful handling of missing data and parsing errors
+#### Stage 1: Data Loading & Indexing
+- Loaded pre-merged Parquet files (training: 6.24M rows, test: 2.67M rows)
+- Set `transaction_id` as index for efficient lookups
+- Verified uniqueness: All transaction IDs are unique (no duplicates)
 
-#### File Location:
-```
-NWU_CSE_FEST_2025_DATATHON_COMPETITION/Training Data/merge_all.py
-```
+#### Stage 2: PII Removal
+- Dropped sensitive columns: `card_number`, `cvv`, `address`, `merchant_city`
+- Preserved anonymized identifiers: `card_id`, `client_id`, `merchant_id`
+
+#### Stage 3: Data Cleaning
+- **Money columns**: Removed `$` and commas, converted to numeric (amount, credit_limit, income, debt)
+- **Dates**: Parsed date columns (date, acct_open_date, expires, year_pin_last_changed)
+- **PIN year**: Extracted year from year_pin_last_changed, dropped original column
+- **Fraud labels**: Converted "Yes"/"No" to 1/0 (int8)
+
+#### Stage 4: Categorical Handling
+- Converted categorical columns to pandas Category dtype
+- Added 'missing' category for handling NaN values
+- Standardized categories across train and test
+
+#### Stage 5: Data Type Optimization
+- Downcasted float64 → float32 (memory savings)
+- Downcasted int64 → int32/int16/int8 where possible
+- Optimized memory usage: Train reduced to ~1.3 GB, Test to ~0.4 GB
+
+#### Stage 6: Missing Value Imputation
+- **Numeric columns**: Filled with median values
+- **Categorical columns**: Filled with 'missing' sentinel value
+- **Result**: Zero missing values in final dataset
 
 #### Output:
-- **Merged Dataset**: `clean_train_full_all_columns_with_nan.csv`
-- **Format**: CSV with all columns from transactions, cards, users, and MCC codes
-- **Target Column**: `target` (1 for fraud, 0 for legitimate)
+- **Cleaned Datasets**: `train_clean.parquet`, `test_clean.parquet`
+- **Format**: Parquet with transaction_id as index
+- **Features**: 33 columns after cleaning (32 in test, no fraud column)
 
 ### 1. Data Loading & Merging (`merge_all.py`)
 
@@ -416,91 +445,93 @@ ___
 
 ## Feature Engineering
 
-### 1. Temporal Features
+Our feature engineering pipeline created **47 features** from the cleaned dataset. Here's the complete breakdown:
+
+### 1. Temporal Features (5 features)
 
 #### Time-Based Features:
-- **Hour of day**: Transaction hour (0-23)
-- **Day of week**: Monday-Sunday (0-6)
-- **Day of month**: 1-31
-- **Month**: 1-12
-- **Weekend indicator**: Binary (Saturday/Sunday)
-- **Business hours**: Binary (9 AM - 5 PM)
+- **hour**: Transaction hour (0-23, int8)
+- **dow**: Day of week (0-6, int8)
+- **is_weekend**: Binary flag for Saturday/Sunday (int8)
+- **is_night**: Binary flag for 0-5 AM (int8)
+- **month**: Month of year (1-12, int8)
 
-#### Time Since Features:
-- **Time since last transaction**: Minutes/hours since user's last transaction
-- **Time since account open**: Days since account creation
-- **Time since PIN change**: Years since last PIN change
+### 2. Account & PIN Age Features (2 features)
 
-### 2. Transaction Amount Features
+- **acct_age_days**: Days since account opening (int32)
+- **pin_age_years**: Years since last PIN change (int16)
 
-#### Amount-Based Features:
-- **Transaction amount**: Raw amount
-- **Amount log**: Log transformation for normalization
-- **Amount percentile**: User's transaction amount percentile
-- **Amount deviation**: Difference from user's average amount
-- **Large transaction flag**: Binary (amount > threshold)
+### 3. Amount Features (3 features)
 
-### 3. User Behavior Features
+- **amount_log**: Log transformation of amount (log1p, float32)
+- **amount_high**: Binary flag for amount > 500 (int8)
+- **amt_per_day**: Amount per account age day (float32)
 
-#### Spending Patterns:
-- **Average transaction amount**: User's average spending
-- **Transaction frequency**: Transactions per day/week/month
-- **Spending velocity**: Amount spent in last 24 hours
-- **Merchant diversity**: Number of unique merchants
-- **MCC diversity**: Number of unique MCC codes
+### 4. Geographic Features (1 feature)
 
-#### Risk Indicators:
-- **Credit utilization**: Credit used / credit limit
-- **Debt-to-income ratio**: Total debt / yearly income
-- **Credit score**: User's credit score
-- **Number of cards**: Cards issued to user
+- **dist_home_km**: Haversine distance from user's home to merchant (vectorized, float32)
+  - **Home location**: Median latitude/longitude per card_id
+  - **Calculation**: Vectorized Haversine formula (10x faster than iterative)
+  - **Fallback**: If no home location, uses transaction location
 
-### 4. Geographic Features
+### 5. Target Encoding Features (6 features)
 
-#### Location-Based Features:
-- **Distance from home**: Haversine distance from user's location to merchant
-- **Unusual location**: Binary (merchant far from user's typical locations)
-- **State match**: Binary (merchant state matches user state)
-- **City match**: Binary (merchant city matches user city)
+Target encoding calculates fraud rate for each category:
 
-### 5. Card Features
+- **te_card_id**: Fraud rate per card (float32)
+- **te_client_id**: Fraud rate per client (float32)
+- **te_merchant_state**: Fraud rate per state (float32)
+- **te_merchant_id**: Fraud rate per merchant (float32) 
+- **te_mcc**: Fraud rate per MCC code (float32) 
+- **te_use_chip**: Fraud rate per chip usage (float32) - dropped in final model
 
-#### Card Characteristics:
-- **Card brand**: Visa, Mastercard, Amex, Discover
-- **Card type**: Credit, Debit, Prepaid
-- **Has chip**: Binary (chip-enabled card)
-- **Card age**: Days since card issuance
-- **PIN age**: Years since last PIN change
-- **Dark web flag**: Binary (card found on dark web)
+**Handling**: Global mean used for unseen categories
 
-### 6. Merchant Features
+### 6. Frequency Encoding Features (4 features)
 
-#### Merchant Characteristics:
-- **MCC category**: Merchant category code
-- **MCC description**: Merchant category description
-- **Merchant frequency**: How often user shops at this merchant
-- **Unusual MCC**: Binary (MCC not typical for user)
+Frequency encoding counts occurrences across train + test:
 
-### 7. Transaction Error Features
+- **freq_card_id**: Transaction count per card (int32)
+- **freq_client_id**: Transaction count per client (int32)
+- **freq_merchant_state**: Transaction count per state (int32)
+- **freq_merchant_id**: Transaction count per merchant (int32) 
 
-#### Error Indicators:
-- **Has errors**: Binary (transaction has errors)
-- **Error type**: Categorical (specific error types)
-- **Error frequency**: How often user has transaction errors
+### 7. Interaction Features (8 features)
 
-### 8. Aggregated Features
+Risk-aware interactions combining multiple signals:
 
-#### User-Level Aggregations:
-- **Total transactions**: User's total transaction count
-- **Total spent**: User's total spending
-- **Average transaction**: User's average transaction amount
-- **Max transaction**: User's maximum transaction amount
-- **Transaction std**: Standard deviation of user's transactions
+- **amt_x_dist**: Amount × distance (float32)
+- **amt_per_card**: Amount / card frequency (float32)
+- **log_amt_per_hour**: Log amount / hour (float32)
+- **dist_per_card**: Distance / card frequency (float32)
+- **amt_x_merchant_risk**: Amount × merchant fraud rate
+- **dist_x_merchant_risk**: Distance × merchant fraud rate 
+- **mcc_risk_x_amount**: MCC fraud rate × amount 
+- **amt_per_merchant**: Amount / merchant frequency 
 
-#### Card-Level Aggregations:
-- **Card transaction count**: Transactions on this card
-- **Card total spent**: Total spending on this card
-- **Card average amount**: Average transaction on this card
+### 8. Raw Features (18 features)
+
+- **Numerical**: client_id, card_id, amount, merchant_id, mcc, zip, num_cards_issued, credit_limit, current_age, retirement_age, birth_year, birth_month, latitude, longitude, per_capita_income, yearly_income, total_debt, credit_score, num_credit_cards
+- **Categorical**: merchant_state, errors, card_brand, card_type, card_on_dark_web, gender, mcc_description
+
+### Feature Engineering Insights
+
+#### Key Features (Highest Impact):
+1. **te_merchant_id**: Merchant fraud rate (strongest signal)
+2. **te_mcc**: MCC fraud rate (merchant category risk)
+3. **freq_merchant_id**: Merchant frequency (behavioral pattern)
+4. **Merchant risk interactions**: Amount × merchant risk, distance × merchant risk
+5. **dist_home_km**: Geographic distance (fraud often far from home)
+
+#### Dropped Features (Data Drift):
+- **use_chip**: 100% missing in test set
+- **has_chip**: 100% missing in test set
+- **te_use_chip**: Derived from use_chip
+
+#### Final Feature Count:
+- **Total**: 47 features (all numeric after encoding)
+- **Training**: 6,240,474 rows × 47 features
+- **Test**: 2,674,489 rows × 47 features
 
 <br>
 
@@ -512,87 +543,118 @@ ___
 
 ### 1. Model Selection
 
-#### Considerations:
-- **Class imbalance**: Need algorithms that handle imbalanced data
-- **Feature importance**: Need interpretable models
-- **Scalability**: Must handle large datasets
-- **Performance**: High recall for fraud detection
+#### Chosen Model: XGBoost with GPU Acceleration
 
-#### Candidate Models:
-1. **XGBoost**: Gradient boosting, handles imbalance, feature importance
-2. **LightGBM**: Fast gradient boosting, efficient for large data
-3. **Random Forest**: Ensemble method, robust to overfitting
-4. **Logistic Regression**: Baseline, interpretable
-5. **Neural Networks**: Deep learning, complex patterns
-
-#### Chosen Approach:
-- **Primary**: XGBoost or LightGBM (gradient boosting)
-- **Rationale**: 
-  - Excellent performance on tabular data
-  - Built-in handling of class imbalance
-  - Feature importance analysis
-  - Fast training and prediction
+**Rationale**:
+- **Excellent performance**: Gradient boosting excels on tabular data
+- **GPU acceleration**: Fast training on large datasets (~14 minutes for 5-fold CV)
+- **Class imbalance handling**: Built-in `scale_pos_weight` parameter
+- **Feature importance**: Interpretable feature contributions
+- **Regularization**: L1/L2 regularization prevents overfitting
 
 ### 2. Class Imbalance Handling
 
-#### Techniques:
-1. **Class Weights**: Weight fraud class higher during training
-   ```python
-   class_weight = {0: 1, 1: 10}  # Fraud is 10x more important
-   ```
+#### Scale Positive Weight:
+```python
+fraud_rate = 0.001495  # 0.15% fraud rate
+scale_pos_weight = (1 - fraud_rate) / fraud_rate  # ~668
+```
 
-2. **SMOTE**: Synthetic Minority Oversampling Technique
-   - Generate synthetic fraud samples
-   - Balance the dataset
+This ensures the model treats fraud cases as 668x more important than legitimate cases during training.
 
-3. **Undersampling**: Randomly sample majority class
-   - Reduce legitimate transactions
-   - Balance the dataset
+### 3. Hyperparameters
 
-4. **Threshold Tuning**: Adjust prediction threshold
-   - Default: 0.5
-   - Optimized: Lower threshold for higher recall
+#### Final XGBoost Parameters:
+```python
+xgb_params = {
+    'objective': 'binary:logistic',
+    'eval_metric': 'logloss',
+    'tree_method': 'gpu_hist',          # GPU acceleration
+    'gpu_id': 0,
+    'predictor': 'gpu_predictor',
+    'random_state': 42,
+    'learning_rate': 0.05,              # Conservative learning rate
+    'max_depth': 9,                     # Deep trees for complex patterns
+    'subsample': 0.8,                   # 80% sampling for regularization
+    'colsample_bytree': 0.8,            # 80% feature sampling
+    'reg_alpha': 0.2,                   # L1 regularization
+    'reg_lambda': 1.5,                  # L2 regularization (strong)
+    'min_child_weight': 3,              # Minimum samples in leaf
+    'scale_pos_weight': 668,            # Handle class imbalance
+    'n_estimators': 3000,               # Large number (early stopping)
+    'early_stopping_rounds': 75         # Prevent overfitting
+}
+```
 
-### 3. Hyperparameter Tuning
-
-#### Key Parameters:
-- **Learning rate**: 0.01-0.1
-- **Number of estimators**: 100-1000
-- **Max depth**: 3-10
-- **Min child weight**: 1-10
-- **Subsample**: 0.6-1.0
-- **Colsample bytree**: 0.6-1.0
-- **Scale pos weight**: Class imbalance ratio
-
-#### Tuning Strategy:
-- **Grid Search**: Exhaustive search over parameter grid
-- **Random Search**: Random sampling of parameter space
-- **Bayesian Optimization**: Efficient parameter search
-- **Cross-Validation**: K-fold CV for robust evaluation
+#### Key Design Decisions:
+- **Deep trees (depth=9)**: Capture complex fraud patterns
+- **Strong regularization**: reg_lambda=1.5 prevents overfitting on imbalanced data
+- **Early stopping**: Stops training after 75 rounds without improvement
+- **GPU acceleration**: 10-50x faster than CPU
 
 ### 4. Validation Strategy
 
-#### Approach:
-- **Time-based split**: Train on earlier data, validate on later data
-- **Stratified K-Fold**: Maintain class distribution in folds
-- **User-based split**: Keep user's transactions together
-- **Hold-out set**: Final test set for evaluation
+#### 5-Fold Stratified K-Fold Cross-Validation:
+```python
+n_splits = 5
+skf = StratifiedKFold(n_splits=n_splits, shuffle=True, random_state=42)
+```
 
-#### Metrics:
-- **Accuracy**: Overall correctness
-- **Precision**: Fraud predictions that are actually fraud
-- **Recall**: Fraud cases correctly identified
-- **F1-Score**: Harmonic mean of precision and recall
-- **AUC-ROC**: Area under ROC curve
-- **AUC-PR**: Area under Precision-Recall curve (better for imbalance)
+**Benefits**:
+- **Stratified**: Maintains fraud rate in each fold (~0.15%)
+- **Robust evaluation**: 5-fold CV provides stable performance estimates
+- **Out-of-fold predictions**: Used for threshold optimization
 
-### 5. Model Ensemble
+### 5. Threshold Optimization
 
-#### Strategy:
-- **Multiple models**: Train XGBoost, LightGBM, Random Forest
-- **Voting**: Average predictions from multiple models
-- **Stacking**: Use meta-learner to combine predictions
-- **Weighted average**: Weight models by performance
+#### 2-Phase Threshold Tuning:
+
+**Phase 1: Coarse Search**
+- Search range: 0.3 to 0.95
+- Step size: 30 points
+- Finds approximate optimal threshold
+
+**Phase 2: Fine Search**
+- Search range: Best threshold ± 0.05
+- Step size: 50 points
+- Refines optimal threshold
+
+**Optimization Metric**: Cohen Kappa Score (competition metric)
+
+**Final Threshold**: 0.717 (average across 5 folds)
+
+### 6. Training Process
+
+#### Cross-Validation Loop:
+1. **Split data**: 5-fold stratified split
+2. **Train model**: XGBoost on training fold
+3. **Validate**: Predict on validation fold
+4. **Optimize threshold**: Find best threshold for Kappa on validation fold
+5. **Test prediction**: Predict on test set
+6. **Average**: Average test predictions across 5 folds
+
+#### Training Time:
+- **Per fold**: ~2-3 minutes on GPU
+- **Total**: ~14 minutes for 5-fold CV
+- **Early stopping**: Typically stops around 1,500-1,600 iterations
+
+### 7. Results
+
+#### Cross-Validation Performance:
+- **Mean CV Kappa**: 0.89627
+- **OOF Kappa**: 0.89522
+- **Best threshold**: 0.717
+
+#### Fold Performance:
+- Fold 1: Kappa = 0.89565 @ threshold = 0.844
+- Fold 2: Kappa = 0.89637 @ threshold = 0.698
+- Fold 3: Kappa = 0.89442 @ threshold = 0.711
+- Fold 4: Kappa = 0.89603 @ threshold = 0.658
+- Fold 5: Kappa = 0.89887 @ threshold = 0.671
+
+#### Final Predictions:
+- **Fraud predictions**: 3,256 transactions (0.12% of test set)
+- **Legitimate predictions**: 2,671,233 transactions (99.88% of test set)
 
 <br>
 
@@ -602,103 +664,214 @@ ___
 
 ## Code Walkthrough
 
-### Step 1: Data Merging Script (`merge_all.py`)
+### Step 1: Data Preprocessing
 
-#### Purpose
-The `merge_all.py` script is the core of our data preprocessing pipeline. It efficiently merges transaction data with card information, user demographics, fraud labels, and MCC codes.
-
-#### Key Components
-
-##### 1. **Loading Static Tables**
+#### 1.1 Load and Index Data
 ```python
-cards = pd.read_csv('train_cards_data.csv')
-users = pd.read_csv('train_users_data.csv')
+train_df = pd.read_parquet("/kaggle/input/nwu-datathon/merged_train_dataset.parquet")
+test_df  = pd.read_parquet("/kaggle/input/nwu-datathon/test_merged_data.parquet")
+
+# Set transaction_id as index
+train_df = train_df.set_index('transaction_id', verify_integrity=True)
+test_df  = test_df.set_index('transaction_id',  verify_integrity=True)
 ```
 
-Static tables (cards and users) are small enough to load entirely into memory.
-
-##### 2. **Loading Fraud Labels**
+#### 1.2 Drop PII and Clean Data
 ```python
-try:
-    with open('train_fraud_labels.json', 'r', encoding='utf-8') as f:
-        raw = f.read()
-    try:
-        labels_obj = json.loads(raw)
-    except json.JSONDecodeError:
-        cleaned = re.sub(r'[\x00-\x1f]+', '', raw)
-        labels_obj = json.loads(cleaned)
+# Drop sensitive columns
+drop_cols = ['card_number', 'cvv', 'address', 'merchant_city']
+train_df = train_df.drop(columns=drop_cols, errors='ignore')
+
+# Convert fraud labels
+train_df['fraud'] = train_df['fraud'].map({'Yes':1, 'No':0}).astype('int8')
+
+# Clean money columns
+money_cols = ['amount','credit_limit','per_capita_income','yearly_income','total_debt']
+for col in money_cols:
+    train_df[col] = pd.to_numeric(
+        train_df[col].astype(str).str.replace(r'[\$,]', '', regex=True), 
+        errors='coerce'
+    )
 ```
 
-Robust JSON parsing handles control characters and various JSON formats.
-
-##### 3. **Loading MCC Codes**
+#### 1.3 Parse Dates and Extract Features
 ```python
-with open('mcc_codes.json', 'r', encoding='utf-8') as f:
-    mcc_codes = json.load(f)
-mcc_df = pd.DataFrame(list(mcc_codes.items()), columns=['mcc', 'mcc_description'])
+# Parse dates
+for col in ['date','acct_open_date','expires','year_pin_last_changed']:
+    train_df[col] = pd.to_datetime(train_df[col], errors='coerce')
+
+# Extract PIN year
+train_df['pin_year'] = train_df['year_pin_last_changed'].dt.year.fillna(-999).astype('int16')
 ```
 
-MCC codes are loaded and converted to a DataFrame for merging.
+### Step 2: Feature Engineering
 
-##### 4. **Chunked Processing**
+#### 2.1 Temporal Features
 ```python
-chunksize = 200000
-reader = pd.read_csv(transactions_path, chunksize=chunksize, low_memory=False)
-
-for i, chunk in enumerate(reader):
-    wrote = process_and_write_chunk(chunk, write_header=(i == 0))
-    total_rows += wrote
-    del chunk
-    gc.collect()
+for df in [train, test]:
+    df['hour']       = df['date'].dt.hour.astype('int8')
+    df['dow']        = df['date'].dt.dayofweek.astype('int8')
+    df['is_weekend'] = (df['dow'] >= 5).astype('int8')
+    df['is_night']   = df['hour'].between(0, 5).astype('int8')
+    df['month']      = df['date'].dt.month.astype('int8')
 ```
 
-Transactions are processed in chunks of 200,000 rows to avoid memory overflow.
-
-##### 5. **Processing Function**
+#### 2.2 Geographic Features (Vectorized)
 ```python
-def process_and_write_chunk(chunk, write_header):
-    # Standardize data types
-    chunk['transaction_id'] = pd.to_numeric(chunk.get('transaction_id'), errors='coerce')
-    chunk['card_id'] = chunk['card_id'].astype(str)
-    chunk['client_id'] = chunk['client_id'].astype(str)
-    chunk['mcc'] = chunk['mcc'].astype(str)
-    
-    # Merge with static tables
-    merged = chunk.merge(cards, on=['card_id', 'client_id'], how='left')
-    merged = merged.merge(users, on='client_id', how='left')
-    
-    # Map fraud labels
-    if labels_series is not None:
-        merged['target'] = merged['transaction_id'].map(labels_series)
-    
-    # Merge MCC codes
-    if 'mcc' in merged.columns:
-        merged = merged.merge(mcc_df, on='mcc', how='left')
-    
-    # Write to output file
-    merged.to_csv(output_path, mode='a', header=write_header)
-    
-    return len(merged)
+def haversine_vectorized(lat1, lon1, lat2, lon2):
+    R = 6371.0
+    lat1, lon1, lat2, lon2 = map(np.radians, [lat1, lon1, lat2, lon2])
+    dlat = lat2 - lat1
+    dlon = lon2 - lon1
+    a = np.sin(dlat/2)**2 + np.cos(lat1) * np.cos(lat2) * np.sin(dlon/2)**2
+    return (2 * R * np.arcsin(np.sqrt(np.clip(a, 0, 1)))).astype('float32')
+
+# Calculate home location (median per card)
+home = train.groupby('card_id')[['latitude','longitude']].median()
+home.columns = ['home_lat','home_lon']
+
+# Calculate distance from home
+train = train.join(home, on='card_id', how='left')
+train['dist_home_km'] = haversine_vectorized(
+    train['latitude'].values, train['longitude'].values,
+    train['home_lat'].values, train['home_lon'].values
+)
 ```
 
-Each chunk is:
-1. Standardized (data types)
-2. Merged with cards and users
-3. Labeled with fraud indicators
-4. Enriched with MCC descriptions
-5. Written to output file
+#### 2.3 Target Encoding
+```python
+global_mean = train['fraud'].mean()
+te_cols = ['card_id', 'client_id', 'merchant_state', 'merchant_id', 'mcc']
 
-#### Usage
-```bash
-cd NWU_CSE_FEST_2025_DATATHON_COMPETITION/Training Data
-python merge_all.py
+for col in te_cols:
+    means = train.groupby(col)['fraud'].mean().astype('float32')
+    train[f'te_{col}'] = train[col].map(means).fillna(global_mean).astype('float32')
+    test[f'te_{col}']  = test[col].map(means).fillna(global_mean).astype('float32')
 ```
 
-#### Output
-- **File**: `clean_train_full_all_columns_with_nan.csv`
-- **Size**: Depends on transaction data size
-- **Columns**: All columns from transactions, cards, users, and MCC codes
-- **Target**: `target` column (1 for fraud, 0 for legitimate)
+#### 2.4 Frequency Encoding
+```python
+freq_cols = ['card_id', 'client_id', 'merchant_state', 'merchant_id']
+
+for col in freq_cols:
+    all_col = pd.concat([train[col], test[col]], axis=0)
+    cnt = all_col.value_counts()
+    train[f'freq_{col}'] = train[col].map(cnt).astype('int32')
+    test[f'freq_{col}']  = test[col].map(cnt).astype('int32')
+```
+
+#### 2.5 Interaction Features
+```python
+for df in [train, test]:
+    df['amt_x_merchant_risk'] = (df['amount'] * df['te_merchant_id']).astype('float32')
+    df['dist_x_merchant_risk'] = (df['dist_home_km'] * df['te_merchant_id']).astype('float32')
+    df['mcc_risk_x_amount'] = (df['te_mcc'] * df['amount']).astype('float32')
+    df['amt_per_merchant'] = (df['amount'] / (df['freq_merchant_id'] + 1)).astype('float32')
+```
+
+### Step 3: Model Training
+
+#### 3.1 Prepare Data
+```python
+# Drop drift columns (100% missing in test)
+drift_drop_cols = ['use_chip', 'has_chip', 'te_use_chip']
+train.drop(columns=drift_drop_cols, inplace=True)
+test.drop(columns=drift_drop_cols, inplace=True)
+
+# Encode categoricals
+cat_cols = ['merchant_state', 'errors', 'card_brand', 'card_type', 
+            'card_on_dark_web', 'gender', 'mcc_description']
+for col in cat_cols:
+    le = LabelEncoder()
+    combined = pd.concat([train[col].astype(str), test[col].astype(str)])
+    le.fit(combined)
+    train[col] = le.transform(train[col].astype(str)).astype('int32')
+    test[col]  = le.transform(test[col].astype(str)).astype('int32')
+
+# Prepare X, y
+X = train.drop(columns=['fraud'])
+y = train['fraud']
+X_test = test.copy()
+```
+
+#### 3.2 XGBoost Training
+```python
+# Calculate scale_pos_weight
+fraud_rate = y.mean()
+scale_pos_weight = (1 - fraud_rate) / fraud_rate
+
+# XGBoost parameters
+xgb_params = {
+    'objective': 'binary:logistic',
+    'eval_metric': 'logloss',
+    'tree_method': 'gpu_hist',
+    'gpu_id': 0,
+    'predictor': 'gpu_predictor',
+    'random_state': 42,
+    'learning_rate': 0.05,
+    'max_depth': 9,
+    'subsample': 0.8,
+    'colsample_bytree': 0.8,
+    'reg_alpha': 0.2,
+    'reg_lambda': 1.5,
+    'min_child_weight': 3,
+    'scale_pos_weight': scale_pos_weight,
+    'n_estimators': 3000,
+    'early_stopping_rounds': 75
+}
+
+# 5-fold cross-validation
+skf = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
+oof_preds = np.zeros(len(X))
+test_preds = np.zeros(len(X_test))
+
+for fold, (trn_idx, val_idx) in enumerate(skf.split(X, y)):
+    X_trn, X_val = X.iloc[trn_idx], X.iloc[val_idx]
+    y_trn, y_val = y.iloc[trn_idx], y.iloc[val_idx]
+    
+    model = XGBClassifier(**xgb_params)
+    model.fit(X_trn, y_trn, eval_set=[(X_val, y_val)], 
+              early_stopping_rounds=75, verbose=100)
+    
+    oof_preds[val_idx] = model.predict_proba(X_val)[:, 1]
+    test_preds += model.predict_proba(X_test)[:, 1] / 5
+```
+
+#### 3.3 Threshold Optimization
+```python
+# 2-phase threshold optimization
+# Phase 1: Coarse search
+thresholds_coarse = np.linspace(0.3, 0.95, 30)
+best_kappa = -1
+best_thresh = 0.5
+for thresh in thresholds_coarse:
+    pred = (oof_preds[val_idx] >= thresh).astype(int)
+    kappa = cohen_kappa_score(y_val, pred)
+    if kappa > best_kappa:
+        best_kappa = kappa
+        best_thresh = thresh
+
+# Phase 2: Fine search
+fine_start = max(0.3, best_thresh - 0.05)
+fine_end = min(0.95, best_thresh + 0.05)
+thresholds_fine = np.linspace(fine_start, fine_end, 50)
+for thresh in thresholds_fine:
+    pred = (oof_preds[val_idx] >= thresh).astype(int)
+    kappa = cohen_kappa_score(y_val, pred)
+    if kappa > best_kappa:
+        best_kappa = kappa
+        best_thresh = thresh
+```
+
+#### 3.4 Generate Submission
+```python
+final_threshold = np.mean(best_thresholds)  # 0.717
+submission = pd.DataFrame({
+    'transaction_id': test.index,
+    'fraud': np.where(test_preds >= final_threshold, 'Yes', 'No')
+})
+submission.to_csv('submission.csv', index=False)
+```
 
 <br>
 
@@ -712,7 +885,10 @@ ___
 
 - **Final Ranking**: #6 among 40 teams
 - **Evaluation Metric**: Cohen Kappa Score
-- **Score**: 0.90425 
+- **Final Score**: 0.90425
+- **CV Performance**: Mean CV Kappa = 0.89627, OOF Kappa = 0.89522
+- **Training Time**: ~14 minutes on GPU (5-fold CV)
+- **Predictions**: 3,256 fraud cases (0.12% of test set) 
 
 
 
@@ -724,40 +900,53 @@ ___
 
 ## Key Insights
 
-### 1. **Data Integration is Critical**
-- **Lesson**: Merging multiple data sources (transactions, cards, users, MCC) significantly improved model performance
-- **Impact**: Rich feature set enabled better fraud detection
-- **Takeaway**: Always leverage all available data sources
+### 1. **Target Encoding is the Game Changer**
+- **Lesson**: Target encoding for high-cardinality categoricals (merchant_id, mcc, card_id) provided the strongest fraud signals
+- **Impact**: `te_merchant_id` and `te_mcc` were among the top features
+- **Key Insight**: Fraud patterns are highly merchant and category-specific
+- **Takeaway**: Always use target encoding for high-cardinality categoricals in fraud detection
 
-### 2. **Memory Management is Essential**
-- **Lesson**: Chunked processing is necessary for large datasets
-- **Strategy**: Process data in batches, clean up memory explicitly
-- **Result**: Successfully handled >200MB transaction file
-- **Trade-off**: Slightly slower processing but enables scalability
+### 2. **Data Drift Detection is Critical**
+- **Lesson**: Test set had 100% missing values for `use_chip` and `has_chip` (train had values)
+- **Solution**: Identified and dropped drift columns before modeling
+- **Impact**: Prevented model from learning on features unavailable at test time
+- **Takeaway**: Always compare train/test distributions for categorical columns
 
-### 3. **Class Imbalance Requires Special Handling**
-- **Lesson**: Standard classifiers fail on imbalanced data
-- **Solution**: Use class weights, SMOTE, or threshold tuning
-- **Impact**: Significant improvement in fraud detection recall
-- **Competition insight**: Recall is more important than precision for fraud detection
+### 3. **Threshold Optimization Matters for Kappa**
+- **Lesson**: Default threshold (0.5) is suboptimal for Cohen Kappa score
+- **Solution**: 2-phase threshold optimization (coarse → fine) on validation set
+- **Impact**: Optimal threshold (0.717) significantly improved Kappa score
+- **Key Insight**: Kappa rewards balanced predictions, not just accuracy
 
-### 4. **Feature Engineering Drives Performance**
-- **Lesson**: Temporal and behavioral features are highly predictive
-- **Key Features**: Time since last transaction, spending patterns, geographic distance
-- **Result**: Feature engineering improved model performance significantly
-- **Best Practices**: Domain knowledge + data exploration = better features
+### 4. **Vectorized Operations are Essential**
+- **Lesson**: Vectorized Haversine distance calculation is 10x faster than iterative
+- **Solution**: Used NumPy vectorized operations for geographic features
+- **Impact**: Reduced feature engineering time from hours to minutes
+- **Takeaway**: Always vectorize operations when possible
 
-### 5. **Robust Data Cleaning is Necessary**
-- **Lesson**: Real-world data has quality issues (missing values, type mismatches, control characters)
-- **Solution**: Implement robust parsing and error handling
-- **Impact**: Prevented crashes and data loss
-- **Takeaway**: Always anticipate and handle data quality issues
+### 5. **Merchant Risk Interactions are Powerful**
+- **Lesson**: Interactions between amount/distance and merchant fraud rate are highly predictive
+- **Key Features**: `amt_x_merchant_risk`, `dist_x_merchant_risk`, `mcc_risk_x_amount`
+- **Impact**: These interactions captured complex fraud patterns
+- **Takeaway**: Create risk-aware interactions for fraud detection
 
-### 6. **Gradient Boosting Works Well for Fraud Detection**
-- **Lesson**: XGBoost/LightGBM excel at fraud detection tasks
-- **Reasons**: Handle imbalance, capture complex patterns, provide feature importance
-- **Result**: Achieved high performance with gradient boosting
-- **Alternative**: Neural networks for very large datasets
+### 6. **GPU Acceleration is a Must for Large Datasets**
+- **Lesson**: XGBoost GPU training is 10-50x faster than CPU
+- **Impact**: 5-fold CV completed in ~14 minutes vs hours on CPU
+- **Key Insight**: GPU enables rapid experimentation and hyperparameter tuning
+- **Takeaway**: Always use GPU when available for large-scale machine learning
+
+### 7. **Scale Pos Weight Handles Extreme Imbalance**
+- **Lesson**: `scale_pos_weight = 668` (fraud rate 0.15%) effectively handles class imbalance
+- **Impact**: Model learned to detect fraud without oversampling/undersampling
+- **Key Insight**: XGBoost's scale_pos_weight is simpler and more effective than SMOTE
+- **Takeaway**: Use scale_pos_weight for extreme class imbalance in XGBoost
+
+### 8. **Regularization Prevents Overfitting on Imbalanced Data**
+- **Lesson**: Strong L2 regularization (reg_lambda=1.5) prevents overfitting on rare fraud cases
+- **Impact**: Model generalizes well despite extreme class imbalance
+- **Key Insight**: Imbalanced data requires stronger regularization
+- **Takeaway**: Increase regularization strength for imbalanced datasets
 
 ### Common Mistakes We Avoided
 
@@ -813,164 +1002,148 @@ ___
 
 ```bash
 # Install required packages
-pip install pandas numpy scikit-learn xgboost lightgbm
+pip install pandas numpy scikit-learn xgboost
 ```
 
-### 2. **Dataset Preparation**
+**Note**: For GPU acceleration, ensure CUDA is installed and XGBoost is compiled with GPU support.
 
-```bash
-# Navigate to dataset directory
-cd NWU_CSE_FEST_2025_DATATHON_COMPETITION/Training Data
-
-# Run data merging script
-python merge_all.py
-```
-
-This will create `clean_train_full_all_columns_with_nan.csv` with all merged data.
-
-### 3. **Feature Engineering**
+### 2. **Load Data**
 
 ```python
-# Load merged dataset
 import pandas as pd
-df = pd.read_csv('clean_train_full_all_columns_with_nan.csv')
 
-# Create temporal features
-df['date'] = pd.to_datetime(df['date'])
-df['hour'] = df['date'].dt.hour
-df['day_of_week'] = df['date'].dt.dayofweek
-df['is_weekend'] = df['day_of_week'].isin([5, 6]).astype(int)
+# Load pre-merged Parquet files (or merge using merge_all.py)
+train = pd.read_parquet('merged_train_dataset.parquet')
+test = pd.read_parquet('test_merged_data.parquet')
 
-# Create amount features
-df['amount_log'] = np.log1p(df['amount'])
-df['amount_percentile'] = df.groupby('client_id')['amount'].transform(
-    lambda x: x.rank(pct=True)
-)
-
-# Create user behavior features
-user_stats = df.groupby('client_id').agg({
-    'amount': ['mean', 'std', 'count'],
-    'transaction_id': 'count'
-}).reset_index()
-
-# Merge user statistics
-df = df.merge(user_stats, on='client_id', how='left')
-
-# Create geographic features (if latitude/longitude available)
-from geopy.distance import geodesic
-df['distance_from_home'] = df.apply(
-    lambda row: geodesic(
-        (row['user_latitude'], row['user_longitude']),
-        (row['merchant_latitude'], row['merchant_longitude'])
-    ).miles if pd.notna(row['user_latitude']) else None,
-    axis=1
-)
+# Set transaction_id as index
+train = train.set_index('transaction_id', verify_integrity=True)
+test = test.set_index('transaction_id', verify_integrity=True)
 ```
 
-### 4. **Model Training**
+### 3. **Data Preprocessing**
+
+See the **Code Walkthrough** section above for complete preprocessing steps:
+- Drop PII columns
+- Clean money columns (remove $ and commas)
+- Parse dates
+- Handle missing values
+- Optimize data types
+
+### 4. **Feature Engineering**
+
+See the **Code Walkthrough** section above for complete feature engineering:
+- Temporal features (hour, dow, is_weekend, is_night, month)
+- Account age features (acct_age_days, pin_age_years)
+- Amount features (amount_log, amount_high, amt_per_day)
+- Geographic features (dist_home_km - vectorized Haversine)
+- Target encoding (te_merchant_id, te_mcc, te_card_id, etc.)
+- Frequency encoding (freq_merchant_id, freq_card_id, etc.)
+- Interaction features (amt_x_merchant_risk, dist_x_merchant_risk, etc.)
+
+### 5. **Model Training**
 
 ```python
 from xgboost import XGBClassifier
-from sklearn.model_selection import train_test_split
-from sklearn.metrics import classification_report, confusion_matrix
-
-# Prepare features and target
-feature_cols = [col for col in df.columns if col not in ['transaction_id', 'target', 'date']]
-X = df[feature_cols]
-y = df['target']
-
-# Handle missing values
-X = X.fillna(0)
-
-# Encode categorical variables
+from sklearn.model_selection import StratifiedKFold
+from sklearn.metrics import cohen_kappa_score
 from sklearn.preprocessing import LabelEncoder
-le = LabelEncoder()
-for col in X.select_dtypes(include=['object']).columns:
-    X[col] = le.fit_transform(X[col].astype(str))
+import numpy as np
 
-# Split data
-X_train, X_val, y_train, y_val = train_test_split(
-    X, y, test_size=0.2, random_state=42, stratify=y
-)
+# Prepare data (drop drift columns, encode categoricals)
+# See Code Walkthrough for details
 
-# Calculate class weights
-fraud_count = y_train.sum()
-legit_count = len(y_train) - fraud_count
-scale_pos_weight = legit_count / fraud_count
+# Calculate scale_pos_weight
+fraud_rate = train['fraud'].mean()
+scale_pos_weight = (1 - fraud_rate) / fraud_rate
 
-# Train model
-model = XGBClassifier(
-    n_estimators=1000,
-    max_depth=6,
-    learning_rate=0.01,
-    scale_pos_weight=scale_pos_weight,
-    random_state=42,
-    eval_metric='logloss'
-)
+# XGBoost parameters
+xgb_params = {
+    'objective': 'binary:logistic',
+    'eval_metric': 'logloss',
+    'tree_method': 'gpu_hist',  # Use 'hist' for CPU
+    'gpu_id': 0,
+    'predictor': 'gpu_predictor',
+    'random_state': 42,
+    'learning_rate': 0.05,
+    'max_depth': 9,
+    'subsample': 0.8,
+    'colsample_bytree': 0.8,
+    'reg_alpha': 0.2,
+    'reg_lambda': 1.5,
+    'min_child_weight': 3,
+    'scale_pos_weight': scale_pos_weight,
+    'n_estimators': 3000,
+    'early_stopping_rounds': 75
+}
 
-model.fit(
-    X_train, y_train,
-    eval_set=[(X_val, y_val)],
-    early_stopping_rounds=50,
-    verbose=100
-)
+# 5-fold cross-validation
+skf = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
+oof_preds = np.zeros(len(X))
+test_preds = np.zeros(len(X_test))
 
-# Evaluate model
-y_pred = model.predict(X_val)
-print(classification_report(y_val, y_pred))
-print(confusion_matrix(y_val, y_pred))
+for fold, (trn_idx, val_idx) in enumerate(skf.split(X, y)):
+    X_trn, X_val = X.iloc[trn_idx], X.iloc[val_idx]
+    y_trn, y_val = y.iloc[trn_idx], y.iloc[val_idx]
+    
+    model = XGBClassifier(**xgb_params)
+    model.fit(X_trn, y_trn, eval_set=[(X_val, y_val)], 
+              early_stopping_rounds=75, verbose=100)
+    
+    oof_preds[val_idx] = model.predict_proba(X_val)[:, 1]
+    test_preds += model.predict_proba(X_test)[:, 1] / 5
 ```
 
-### 5. **Prediction & Submission**
+### 6. **Threshold Optimization**
 
 ```python
-# Load test data
-test_df = pd.read_csv('../test_transactions_data.csv')
-test_cards = pd.read_csv('../test_cards_data.csv')
-test_users = pd.read_csv('../test_users_data.csv')
+from sklearn.metrics import cohen_kappa_score
 
-# Merge test data (similar to training)
-test_merged = test_df.merge(test_cards, on=['card_id', 'client_id'], how='left')
-test_merged = test_merged.merge(test_users, on='client_id', how='left')
+# 2-phase threshold optimization
+# Phase 1: Coarse search
+thresholds_coarse = np.linspace(0.3, 0.95, 30)
+best_kappa = -1
+best_thresh = 0.5
+for thresh in thresholds_coarse:
+    pred = (oof_preds[val_idx] >= thresh).astype(int)
+    kappa = cohen_kappa_score(y_val, pred)
+    if kappa > best_kappa:
+        best_kappa = kappa
+        best_thresh = thresh
 
-# Apply same feature engineering
-# ... (same as training)
+# Phase 2: Fine search
+fine_start = max(0.3, best_thresh - 0.05)
+fine_end = min(0.95, best_thresh + 0.05)
+thresholds_fine = np.linspace(fine_start, fine_end, 50)
+for thresh in thresholds_fine:
+    pred = (oof_preds[val_idx] >= thresh).astype(int)
+    kappa = cohen_kappa_score(y_val, pred)
+    if kappa > best_kappa:
+        best_kappa = kappa
+        best_thresh = thresh
 
-# Make predictions
-test_X = test_merged[feature_cols]
-test_X = test_X.fillna(0)
-for col in test_X.select_dtypes(include=['object']).columns:
-    test_X[col] = le.transform(test_X[col].astype(str))
+final_threshold = np.mean(best_thresholds)  # Average across folds
+```
 
-test_pred = model.predict(test_X)
-test_pred_proba = model.predict_proba(test_X)[:, 1]
+### 7. **Generate Submission**
 
+```python
 # Create submission
 submission = pd.DataFrame({
-    'transaction_id': test_merged['transaction_id'],
-    'fraud': ['Yes' if p == 1 else 'No' for p in test_pred]
+    'transaction_id': test.index,
+    'fraud': np.where(test_preds >= final_threshold, 'Yes', 'No')
 })
 
 submission.to_csv('submission.csv', index=False)
 ```
 
-### 6. **Advanced: Threshold Tuning**
+### 8. **Key Notes**
 
-```python
-from sklearn.metrics import precision_recall_curve, f1_score
-
-# Get prediction probabilities
-y_pred_proba = model.predict_proba(X_val)[:, 1]
-
-# Find optimal threshold
-precision, recall, thresholds = precision_recall_curve(y_val, y_pred_proba)
-f1_scores = 2 * (precision * recall) / (precision + recall)
-optimal_idx = np.argmax(f1_scores)
-optimal_threshold = thresholds[optimal_idx]
-
-# Apply optimal threshold
-test_pred = (test_pred_proba >= optimal_threshold).astype(int)
-```
+- **GPU Acceleration**: Use `tree_method='gpu_hist'` for GPU, `'hist'` for CPU
+- **Data Drift**: Always check for columns with 100% missing in test set
+- **Threshold Optimization**: 2-phase optimization is critical for Cohen Kappa
+- **Target Encoding**: Must be done on training set only, then mapped to test
+- **Frequency Encoding**: Can be done on combined train+test for better estimates
 
 <br>
 
@@ -996,9 +1169,20 @@ NWU_CSE_FEST_2025_DATATHON_COMPETITION/
 ├── test_cards_data.csv                  # Test cards
 ├── test_users_data.csv                  # Test users
 ├── sample_submission.csv                # Submission format
+├── my-notebook.ipynb                    # Main competition notebook
 │
 └── README.md                            # This file
 ```
+
+### Notebook Structure
+
+The `my-notebook.ipynb` contains the complete pipeline:
+1. **Data Loading**: Load and inspect merged Parquet files
+2. **Data Preprocessing**: Clean, index, and prepare data
+3. **Feature Engineering**: Create 47 features
+4. **Model Training**: XGBoost with 5-fold CV
+5. **Threshold Optimization**: 2-phase optimization for Kappa
+6. **Submission Generation**: Create submission file
 
 <br>
 
@@ -1068,6 +1252,8 @@ ___
 ___
 
 <br>
+
+
 
 
 
