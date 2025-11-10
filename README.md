@@ -2,6 +2,8 @@
 
 #### Competition link: https://www.kaggle.com/competitions/nwu-cse-fest-2025-datathon-competition/overview
 
+#### dataset: https://www.kaggle.com/datasets/avizithdebnath/nwu-datathon
+
 ## Table of Contents
 - [Challenge Overview](#challenge-overview)
 - [Problem Analysis](#problem-analysis)
